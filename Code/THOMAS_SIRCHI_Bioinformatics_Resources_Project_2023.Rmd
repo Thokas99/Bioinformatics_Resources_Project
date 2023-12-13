@@ -1,0 +1,729 @@
+---
+title: "Bioinformatics Resources 2023"
+author: "Thomas Sirchi"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    df_print: paged
+editor_options:
+  markdown:
+    wrap: 70
+---
+
+```{r setup, include=FALSE, echo = FALSE}
+
+# Define a vector of package names
+PACKAGES <- c(
+  "biomaRt", "dplyr", "oligo", "genefilter", "limma","edgeR","tidyverse",
+  "GenomicFeatures", "stringr","fgsea","clusterProfiler","org.Hs.eg.db",
+  "pathview","MotifDb","PWMEnrich", "PWMEnrich.Hsapiens.background",
+  "seqLogo","igraph"
+)
+
+# Set the root directory as workdir (Please change as you will)
+knitr::opts_knit$set(root.dir = ".")
+
+# Load the workspace data from the file "workRoman.RData"
+load("Ready_to_load.RData")
+
+# Load the required packages silently
+invisible(lapply(PACKAGES, library, character.only = TRUE))
+
+# Set the download file method to "libcurl"
+options(download.file.method = "libcurl")
+
+# Set the seed for reproducibility
+set.seed(0071)
+```
+
+## 1. Load the RData file
+
+1.  Load the RData file. The following three data-frames are available:
+
+```{=html}
+<!-- -->
+```
+a)  raw_counts_df = contains the raw RNA-seq counts
+
+b)  c_anno_df = contains sample name and condition (case and control)
+
+c)  r\_ anno_df = contains the ENSEMBL genes ids, the length of the
+    genes and the genes symbols
+
+```{r RData file, echo=FALSE}
+
+# Load the RData file "Lung_adenocarcinoma.RData"
+load("Lung_adenocarcinoma.RData")
+
+# Check the dimensions (number of rows and columns) of the raw_counts_df dataframe
+dim(raw_counts_df)
+
+# Check the dimensions of the r_anno_df dataframe
+dim(r_anno_df)
+
+# Check the dimensions of the c_anno_df dataframe
+dim(c_anno_df)
+
+
+```
+
+## 2. Update raw_count_df and r_anno_df
+
+2.  Update raw_count_df and r_anno_df extracting only protein coding
+    genes. a Use biomaRt package to retrieve the needed information b
+    Next tasks should use the new data-frames you have created
+
+```{r update the data, echo=FALSE}
+# Use the Ensembl database with the 'hsapiens_gene_ensembl' dataset ##
+ensembl <- useMart(biomart = 'ensembl', dataset = 'hsapiens_gene_ensembl')
+
+# Get the filtering criteria (ensembl_gene_id) from the r_anno_df object
+filter_gene_id <- r_anno_df$ensembl_gene_id
+
+# Perform a query to retrieve the attributes 'ensembl_gene_id', 'external_gene_name', and 'gene_biotype'
+query_1 <- getBM(attributes = c('ensembl_gene_id', 'external_gene_name', 'gene_biotype'),
+               filters = 'ensembl_gene_id',
+               values = filter_gene_id,
+               mart = ensembl)
+
+# Filter the query results to include only genes with 'gene_biotype' equal to 'protein_coding'
+protein_coding_genes <- subset(query_1, gene_biotype == 'protein_coding')
+
+# Filter the r_anno_df object to include only genes with ensembl_gene_id present in the query_protein_coding results
+r_anno_df_filtered <- subset(r_anno_df, ensembl_gene_id %in% protein_coding_genes$ensembl_gene_id)
+
+# Filter the raw_counts_df object to include only rows with rownames present in the query_protein_coding results
+raw_count_df_filtered <- raw_counts_df[rownames(raw_counts_df) %in% protein_coding_genes$ensembl_gene_id,]
+
+# Show the filtered data frames
+head(r_anno_df_filtered)
+```
+
+## 3. Differential expression analysis
+
+3.  Perform differential expression analysis using edgeR package and
+    select up- and down-regulated genes using a p-value cutoff of 0.01,
+    a log fold change ratio \>1.5 for up-regulated genes and \< (-1.5)
+    for down-regulated genes and a log CPM \>1. Relax the thresholds if
+    no or few results are available.
+
+    a)  Use the workflow we developed during the course
+
+    b)  Filter raw counts data retaining only genes with a raw count
+        \>20 in at least 5 Cases or 5 Control samples
+
+    c)  Create a volcano plot of your results
+
+    d)  Create an annotated heatmap focusing only on up- and
+        down-regulated
+
+    genes
+
+```{r Filter raw counts data, echo=FALSE}
+
+# Set the raw count and replicate thresholds
+count_thr <- 20
+repl_thr <- 5
+
+# Filter genes based on the raw count threshold
+gene_filter <- apply(raw_count_df_filtered, 1, function(counts) sum(counts >= count_thr))
+filtered_genes <- gene_filter >= repl_thr
+
+# Summary of the filter vector
+table(filtered_genes)
+
+# Filter the raw_count_df_filtered based on the filter vector and replicate threshold
+filtered_counts <- raw_count_df_filtered[filtered_genes, ]
+# The number of rows represents the number of transcripts that satisfy the threshold
+dim(filtered_counts) 
+
+# Filter the gene annotation based on the filtered genes
+filtered_annotation <- r_anno_df_filtered[rownames(filtered_counts), ]
+# The number of rows is equal to the number of rows of the filtered_counts
+dim(filtered_annotation) 
+
+#### Create DGEList object ####
+edge_c <- DGEList(counts = filtered_counts,
+                  group = c_anno_df$condition,
+                  samples = c_anno_df,
+                  genes = filtered_annotation)
+edge_c
+
+# Perform normalization using TMM method
+edge_n <- calcNormFactors(edge_c, method = 'TMM')
+# Identical to edge_c, just a column called normalization factor is added
+edge_n 
+
+#### Compute CPM (counts per million) values ####
+# The library size is scaled by the normalization factor
+cpm_table <- as.data.frame(round(cpm(edge_n), 2)) 
+head(cpm_table)
+
+# Compute log-transformed CPM values
+cpm_table_log <- as.data.frame(round(log10(cpm(edge_n) + 1), 2))
+head(cpm_table_log)
+
+
+# Compute log-transformed CPM values
+cpm_table_log <- as.data.frame(round(log10(cpm(edge_n) + 1), 2))
+head(cpm_table_log)
+
+#### Design matrix for differential expression analysis ####
+# Group corresponds to the data
+design <- model.matrix(~0 + group, data = edge_n$samples)
+colnames(design) <- levels(edge_n$samples$group)
+rownames(design) <- edge_n$samples$sample
+design
+
+
+```
+
+```{r differential expression analysis, echo=FALSE}
+# Estimate dispersion
+edge_d <- estimateDisp(edge_n, design = design)
+head(edge_d)
+
+# Perform quasi-likelihood F-test
+edge_f <- glmQLFit(edge_d, design = design)
+head(edge_f)
+
+# Create contrasts for differential expression analysis
+contrasts <- makeContrasts('case-control', levels = design)
+
+## Perform differential expression analysis
+# Contains the results of the DE analysis
+edge_t <- glmQLFTest(edge_f, contrast = contrasts) 
+head(edge_t)
+
+# Extract differentially expressed genes 
+# 16641 to take into consideration all the variables inside edge_t, so 99 percent significance of the test
+DEGs <- as.data.frame(topTags(edge_t, n = 17369, p.value = 0.01, sort.by = 'logFC')) 
+head(DEGs)
+
+# Assign class labels based on logCPM and logFC thresholds
+DEGs$class <- '='
+DEGs$class[DEGs$logCPM > 1 & DEGs$logFC > 1.5] <- '+'
+DEGs$class[DEGs$logCPM > 1 & DEGs$logFC < -1.5] <- '-'
+# Order based on the fold change
+DEGs <- DEGs[order(DEGs$logFC, decreasing = TRUE),] 
+head(DEGs)
+table(DEGs$class)
+
+```
+
+```{r Create Plots, echo=FALSE}
+
+#### Create Volcano plot ####
+
+# Assign the DEGs dataframe to the input_df variable
+input_df <- DEGs
+
+# Define the x-axis label for the plot
+xlabel <- "log2 FC control vs case"
+
+# Define the y-axis label for the plot
+ylabel <- "-log10 p-value"
+
+# Set the plot parameters and create the initial plot
+par(fig=c(0, 1, 0, 1), mar=c(4, 4, 1, 2), mgp=c(2, 0.75, 0))
+plot(DEGs$logFC, -log10(DEGs$PValue), xlab = xlabel, ylab = ylabel, 
+     col = ifelse(DEGs$class == '=', "grey70", "red"), pch = 20, 
+     frame.plot = TRUE, cex = 0.8, main = "Volcano plot") %>% abline(v = 0, lty = 2, col = "grey20")
+
+#### Create heatmap for differentially expressed genes ####
+
+# Define colors for column side colors in the heatmap
+col <- rep('darkorange', 100) 
+col[c_anno_df$condition == 'case'] <- 'steelblue'  
+
+# Define the color palette for the heatmap
+pal <- colorRampPalette(c('blue', 'white', 'purple'))(100) 
+
+# Subset the cpm_table and cpm_table_log based on DEGs
+selected_cpm <- cpm_table[rownames(cpm_table) %in% DEGs$ensembl_gene_id[DEGs$class != '='], ]
+selected_cpm_log <- cpm_table_log[rownames(cpm_table_log) %in% DEGs$ensembl_gene_id[DEGs$class != '='], ]
+
+# Create a heatmap using the selected_cpm matrix with additional customization
+heatmap(as.matrix(selected_cpm), ColSideColors = col, cexCol = 0.5, margins = c(4, 4), col = pal, cexRow = 0.2)
+
+# Create a heatmap using the selected_cpm_log matrix with additional customization
+heatmap(as.matrix(selected_cpm_log), ColSideColors = col, cexCol = 0.5, margins = c(4, 4), col = pal, cexRow = 0.2)
+
+
+```
+
+```{r Remove unnecessary objects_1 }
+# Define a vector of object names to be removed
+objects_to_remove <- c("raw_counts_df", "r_anno_df", "c_anno_df", "edge_c", "edge_d",
+                      "edge_f", "edge_n", "edge_t", "contrasts", "cpm_table",
+                      "cpm_table_log", "filtered_annotation", "filtered_counts")
+
+# Loop through each object name in the vector and remove the object if it exists
+for (obj in objects_to_remove) {
+  if (exists(obj)) {
+    rm(list = obj)
+  }
+}
+
+```
+
+## 4. Gene set enrichment analysis and Gene Ontology (GO)
+
+4.  Perform gene set enrichment analysis using clusterProfiler R
+    package.
+
+    a)  Perform both GO (BP and MF) and WP analysis
+
+    b)  Report the top 10 enriched GO terms and the top 10 enriched WP
+        pathways resulting from both up- and down-regulated gene lists
+
+```{r Prepare data for (GO)}
+# Convert Ensembl gene IDs to Entrez gene IDs and gene names
+convert <- getBM(attributes = c("ensembl_gene_id", "entrezgene_id", "external_gene_name"),
+                 filter = c("ensembl_gene_id"),
+                 values = DEGs$ensembl_gene_id,
+                 mart = ensembl)
+DEGs <- merge(DEGs, convert, by.x = "ensembl_gene_id", by.y = "ensembl_gene_id")
+
+# Filter out genes with missing Entrez gene IDs
+DEGs <- DEGs[which(!is.na(DEGs$entrezgene_id)),]
+
+# Remove duplicates based on Entrez gene IDs
+DEGs <- DEGs[-which(duplicated(DEGs$entrezgene_id)),]
+
+```
+
+```{r Upregulated genes}
+# Filter differentially expressed genes based on class (up-regulated genes)
+UPDegs <- DEGs %>% filter(class == '+')
+
+# Perform Gene Ontology (GO) enrichment analysis for biological process (BP) ontology on up-regulated genes
+ego_BP_UP <- enrichGO(gene = UPDegs$external_gene_name.x, OrgDb = org.Hs.eg.db, keyType = 'SYMBOL', ont = 'BP', pAdjustMethod = 'BH', pvalueCutoff = 0.05, qvalueCutoff =  0.05)
+head(ego_BP_UP)
+
+
+# Visualize enriched GO terms for up-regulated genes
+barplot(ego_BP_UP, showCategory = 10) # First ten enriched terms
+dotplot(ego_BP_UP, showCategory = 10) # First ten enriched terms
+heatplot(ego_BP_UP, showCategory = 2,) # Genes associated with the top two enriched terms
+head(ego_BP_UP, 10)
+
+# Perform GO enrichment analysis for molecular function (MF) ontology on up-regulated genes
+ego_MF_UP <- enrichGO(gene = UPDegs$external_gene_name.x, OrgDb = org.Hs.eg.db, keyType = 'SYMBOL', ont = 'MF', pAdjustMethod = 'BH', pvalueCutoff = 0.05, qvalueCutoff =  0.05)
+head(ego_MF_UP)
+
+# Visualize enriched GO terms for upregulated genes in MF ontology
+barplot(ego_MF_UP, showCategory = 10) # First ten enriched terms
+dotplot(ego_MF_UP, showCategory = 10) # First ten enriched terms
+heatplot(ego_MF_UP, showCategory = 2) # Genes associated with the top two enriched terms
+head(ego_MF_UP, 10)
+
+# Perform KEGG pathway enrichment analysis for upregulated genes
+eWP_UP <- enrichWP(gene = UPDegs$entrezgene_id, organism = 'Homo sapiens', pvalueCutoff = 0.05, qvalueCutoff =  0.1)
+head(eWP_UP, 10)
+```
+
+```{r Downregulated genes}
+# Filter differentially expressed genes based on class (downregulated genes)
+DWDegs <- DEGs %>% filter(class == '-')
+
+# Perform GO enrichment analysis for biological process (BP) ontology on downregulated genes
+ego_BP_DW <- enrichGO(gene = DWDegs$external_gene_name.x, OrgDb = org.Hs.eg.db, keyType = 'SYMBOL', ont = 'BP', pAdjustMethod = 'BH', pvalueCutoff = 0.1, qvalueCutoff =  0.1)
+head(ego_BP_DW)
+
+# Visualize enriched GO terms for downregulated genes in BP ontology
+barplot(ego_BP_DW, showCategory = 10)
+dotplot(ego_BP_DW, showCategory = 10)
+heatplot(ego_BP_DW, showCategory = 2)
+head(ego_BP_DW, 10)
+
+# Perform GO enrichment analysis for molecular function (MF) ontology on downregulated genes
+ego_MF_DW <- enrichGO(gene = DWDegs$external_gene_name.x, OrgDb = org.Hs.eg.db, keyType = 'SYMBOL', ont = 'MF', pAdjustMethod = 'BH', pvalueCutoff = 0.1, qvalueCutoff =  0.1)
+head(ego_MF_DW)
+
+# Visualize enriched GO terms for downregulated genes in MF ontology
+barplot(ego_MF_DW, showCategory = 10)
+dotplot(ego_MF_DW, showCategory = 10)
+heatplot(ego_MF_DW, showCategory = 2)
+head(ego_MF_DW, 10)
+
+# Perform KEGG pathway enrichment analysis for downregulated genes
+eWP_DW <- enrichWP(gene = DWDegs$entrezgene_id, organism = 'Homo sapiens', pvalueCutoff = 0.5, qvalueCutoff =  0.5)
+head(eWP_DW, 10)
+
+```
+
+## 5. Visualize enriched pathway
+
+5.  Use the pathview R package to visualize one pathway you find
+    enriched using the up-regulated gene list.
+
+```{r Visualize enriched pathway}
+# Extract the logFC values from the UPDegs data frame
+logFC_values <- UPDegs$logFC
+
+# Assign the Entrez gene IDs as the names of the logFC vector
+names(logFC_values) <- UPDegs$entrezgene_id
+
+# Use the pathview function from the pathview package to visualize the pathway
+pathview(gene.data = logFC_values, pathway.id = 'hsa05202', species = 'human')
+
+
+```
+
+## 6 .Identification of transcription factors (TFs)
+
+I choose UP-REGULATED
+
+6.  Identify which transcription factors (TFs) have enriched scores in
+    the promoters of all up-regulated (or down-regulated if you prefer)
+    genes.
+
+    a)  use a window of 500 nucleotides upstream each gene
+
+```{r transcription factors (TFs) have enriched scores, echo=FALSE}
+
+# Retrieve upstream sequences for the up-regulated genes based on HGNC symbols
+upstream_sequences <- getSequence(id = UPDegs$external_gene_name.x, 
+                      type = 'hgnc_symbol', 
+                      seqType = 'gene_flank', 
+                      upstream = 500, 
+                      mart = ensembl)
+
+# View the retrieved upstream sequences
+view(upstream_sequences)
+
+# Load the PWMLogn.hg19.MotifDb.Hsap motif database
+data("PWMLogn.hg19.MotifDb.Hsap")
+
+new_sequences <- DNAStringSet(upstream_sequences$gene_flank) 
+
+# Perform motif enrichment analysis using the upstream_sequences and PWMLogn.hg19.MotifDb.Hsap
+
+enrichment_results <- motifEnrichment(new_sequences, PWMLogn.hg19.MotifDb.Hsap, score = 'affinity')
+
+#Generate the group report for the motif enrichment analysis results
+group_report <- groupReport(enrichment_results)
+
+# View the group_report results
+head(group_report)
+
+# Plot the top 5 enriched motifs
+plot(group_report[1:5])
+
+```
+
+## 7. Distribution (log2) threshold cutoff at 99.75%
+
+7.  Select one among the top enriched TFs, compute the empirical
+    distributions of scores for all PWMs that you find in MotifDB for
+    the selected TF and determine for all of them the distribution
+    (log2) threshold cutoff at 99.75%.
+
+```{r}
+# Get the target transcription factor (TF) from the enrichment_results
+group_report_target <- group_report$target[1]
+
+group_report_target
+
+#extract only the gene flank
+new_sequences <- DNAStringSet(upstream_sequences$gene_flank) 
+
+# Query the MotifDb for the specified TF
+tfmotif <- query(MotifDb,group_report_target)
+
+# Convert the TF motif to position weight matrix (PWM)
+PWM_tfs <- toPWM(as.list(tfmotif))
+
+
+# Calculate the empirical cumulative distribution function (ecdf) for the TF motif
+ecdf_tfs <- motifEcdf(PWM_tfs, organism = 'hg19', quick = T)
+
+
+# Set the threshold based on the 99.975th percentile of the ecdf
+threshold <- log2(quantile(ecdf_tfs$`Hsapiens-hPDI-PGAM2`, 1 - 25e-4))
+
+# View the threshold value
+threshold
+
+```
+
+## 8. Genes have a region in their promoter with binding scores above the computed thresholds
+
+8.  Identify which up-regulated (or down-regulated depending on the
+    choice you made at point 7) genes have a region in their promoter
+    (defined as previously) with binding scores above the computed
+    thresholds for any of the previously selected PWMs.
+
+    a)  Use pattern matching as done during the course
+
+```{r}
+
+# Calculate motif scores for new_sequences using PWM_tfs
+# Set raw.scores = FALSE to obtain normalized scores
+# Set cutoff = threshold to filter scores below the threshold
+
+scores <- motifScores(new_sequences, PWM_tfs, raw.scores = FALSE, cutoff = threshold)
+
+
+# Plot motif scores with default cutoff value
+#plotMotifScores(scores, cols = c("red", "green", "blue"), legend.space = 0.1)
+
+# Plot motif scores with a specific cutoff value of 6
+#plotMotifScores(scores, cols = c("red", "green", "blue"), legend.space = 0.1, cutoff = threshold)
+
+# Calculate the proportion
+proportion <- length(which(apply(scores, 1, sum) > 0)) / length(scores)
+
+proportion
+
+```
+
+## 9. STRING database to find PPI interactions
+
+9.  Use STRING database to find PPI interactions among differentially
+    expressed genes and export the network in TSV format.
+
+```{r STRING database}
+# Export the unique Ensembl gene IDs from UPDegs to a text file
+# This data will be used as input in STRING
+
+write.table(unique(UPDegs$ensembl_gene_id), sep = '\t', file = 'up_DEGs.txt',
+            row.names = FALSE, col.names = FALSE, quote = TRUE)
+
+```
+
+## 10. Igraph
+
+10. Import the network in R and using igraph package and identify and
+    plot the largest connected component
+
+```{r Graph from STRING PPI network data}
+# Read the TSV data file containing the interactions
+#links <- read.delim("string_interactions.tsv")
+
+# Read the TSV data file containing the filtered interactions
+links <- read.delim("string_interactions_short.tsv")
+
+# Read the file containing the up-regulated DEGs
+upDEGs <- read.table("up_DEGs.txt")
+
+# Fetch the relevant attributes for the up-regulated DEGs from Ensembl
+nodes <- getBM(attributes = c("external_gene_name", "ensembl_gene_id", "description", "gene_biotype", "start_position",
+                              "end_position","chromosome_name", "strand"),
+               filters = c("ensembl_gene_id"),
+               values = upDEGs$V1,
+               mart = ensembl)
+
+# Filter the links to include only those with nodes present in the DEGs
+links <- links[links$X.node1 %in% nodes$external_gene_name & links$node2 %in% nodes$external_gene_name, ]
+
+# Create the network graph from the data frame of links and the nodes
+net <- graph_from_data_frame(d = links, vertices = nodes, directed = FALSE)
+
+## Check attributes
+"head(edge_attr(net))
+head(vertex_attr(net))
+head(graph_attr(net))"
+```
+
+
+```{r Explore the Graph with the ranks of nodes in mind }
+#### Stats with the complete graph ####
+# Get the degree centrality for each node in the network
+node_degrees <- degree(net)
+
+# Calculate the weighted mean of node degrees in look of a reasonable threshold 
+weighted_mean_degrees <- weighted.mean(node_degrees)
+weighted_mean_degrees  # Print the weighted mean
+
+# Calculate the median of node degrees
+median_degrees <- median(node_degrees)
+median_degrees  # Print the median
+
+# Calculate the quantiles (25th, 50th, and 75th percentiles) of node degrees
+quantiles <- quantile(node_degrees, probs = c(0.25, 0.5, 0.75))
+quantiles  # Print the quantiles
+
+# Create a table with the counts of each node degree
+number_counts <- table(node_degrees)
+as.data.frame(number_counts) # Convert the table to a data frame and view it
+
+# Filter nodes based on the degree centrality threshold, use the 75th percentiles and over the mean to use with community later 
+filtered_nodes_75 <- V(net)[node_degrees >= 23]
+
+# Create a subgraph with the filtered nodes, use the 75th percentiles and over the mean
+net_filtered_75 <- induced_subgraph(net, filtered_nodes_75)
+
+# Get the degree centrality for each node in the network
+node_degrees_75 <- degree(net_filtered_75)
+
+#### Stats with the filtered ####
+
+# Calculate the weighted mean of node degrees in look of a resonable treshold 
+weighted_mean_degrees <- weighted.mean(node_degrees_75)
+weighted_mean_degrees  # Print the weighted mean
+
+# Calculate the median of node degrees
+median_degrees <- median(node_degrees_75)
+median_degrees  # Print the median
+
+# Calculate the quantiles (25th, 50th, and 75th percentiles) of node degrees
+quantiles <- quantile(node_degrees_75, probs = c(0.25, 0.5, 0.75))
+quantiles  # Print the quantiles
+
+# Create a table with the counts of each node degree
+number_counts <- table(node_degrees_75)
+as.data.frame(number_counts) # Convert the table to a data frame and view it
+
+# Set a threshold for the minimum degree to filter the nodes, use value above 75th percentile again to show better
+## For showcasing the graph only
+threshold_net <- 150 
+
+# Filter nodes based on the degree centrality threshold
+filtered_nodes <- V(net)[node_degrees >= threshold_net]
+
+# Create a subgraph with the filtered nodes, 
+net_filtered <- induced_subgraph(net, filtered_nodes)
+
+#### Layouts  ####
+
+# Perform Kamada-Kawai layout (layout_with_kk): This layout algorithm places nodes based on the distances between them, aiming to minimize the total energy of the network. It can be useful for visualizing well-connected networks with a clear hierarchical structure.
+layout_kk <- layout_with_kk(net_filtered)
+layout_kk_full <- layout_with_kk(net)
+
+#Circular layout (layout_as_tree): This layout arranges nodes in a circular pattern, which can be useful for visualizing cyclic or circular relationships within the network.
+layout_circle <- layout_in_circle(net_filtered)
+
+
+#Random layout (layout_random): This layout randomly places nodes in the plot area, which can be helpful for exploring the overall connectivity of the network without any specific spatial organization.
+layout_random <- layout_nicely(net_filtered)
+
+# Scale node sizes based on gene length
+node_sizes =log10(as.numeric(V(net_filtered)$end_position-V(net_filtered)$start_position))
+
+# Scale edge widths based on node sizes
+scaled_edge_widths <- node_sizes / max(node_sizes) * 5
+
+```
+
+```{r Plot the Graph}
+
+# Plot the PPI network
+plot(net_filtered,main="Filtered network (Rank >= 150)",
+     edge.width = scaled_edge_widths,
+     vertex.color = "orange",
+     vertex.size = node_sizes,
+     vertex.frame.color = "darkgray",
+     vertex.label.color = "black",
+     vertex.label.cex = 0.7,
+     edge.curved = 0.1)
+
+# Plot the PPI network with Kamada-Kawai layout
+plot(net_filtered,main="Kamada-Kawai layout, (Rank >= 150)",
+     layout = layout_kk,
+     edge.width = scaled_edge_widths,
+     vertex.color = "orange",
+     vertex.size = node_sizes,
+     vertex.frame.color = "darkgray",
+     vertex.label.color = "black",
+     vertex.label.cex = 0.5,
+     edge.curved = 0.1)
+
+# Plot the PPI network with Circle layout
+plot(net_filtered,main="Circle layout, (Rank >= 150)",
+     layout = layout_circle,
+     edge.width = scaled_edge_widths,
+     vertex.color = "orange",
+     vertex.size = node_sizes,
+     vertex.frame.color = "darkgray",
+     vertex.label.color = "black",
+     vertex.label.cex = 0.5,
+     edge.curved = 0.1)
+
+# Plot the PPI network with Random layout
+plot(net_filtered,main="Random layout, (Rank >= 150)",
+     layout = layout_random,
+     edge.width = scaled_edge_widths,
+     vertex.color = "orange",
+     vertex.size = node_sizes,
+     vertex.frame.color = "darkgray",
+     vertex.label.color = "black",
+     vertex.label.cex = 0.7,
+     edge.curved = 0.1)
+
+#### Plot the PPI network with full data ####
+
+# Scale node sizes based on gene length
+node_size =log10(as.numeric(V(net)$end_position-V(net)$start_position))
+
+# Scale edge widths based on node sizes
+scaled_edge_width <- node_sizes / max(node_sizes) * 5
+
+
+plot(net,main="Full data,Kamada-Kawai layout",
+     layout = layout_kk_full,
+     edge.width = scaled_edge_widths,
+     vertex.color = "orange",
+     vertex.size = log10(as.numeric(V(net)$end_position-V(net)$start_position)),
+     vertex.frame.color = "darkgray",
+     vertex.label.color = "black",
+     vertex.label.cex = 0.7,
+     edge.curved = 0.1)
+
+
+
+```
+
+```{r Dive in community to explore the data}
+
+# Apply the Louvain algorithm for community detection
+louvain <- cluster_louvain(net_filtered_75)
+
+# Get the membership vector indicating community assignments for each node
+membership <- membership(louvain)
+
+# Print the number of communities detected
+num_communities <- length(unique(membership))
+cat("Number of communities:", num_communities, "\n")
+
+# Plot the graph with communities
+plot(net_filtered_75,main="communities data",
+     vertex.color = membership(louvain), 
+     vertex.label = NA)
+
+
+# Plot the graph with communities and random layout 
+plot(net_filtered_75,main="communities data, random layout",
+     layout = layout_nicely(net_filtered_75),
+     vertex.color = membership,
+     edge.curved = 0.1,
+     vertex.label = "")
+# Create a data frame to store the node and community information
+community_df <- data.frame(Node = 1:vcount(net_filtered_75), Community = membership)
+
+# Print the data frame
+community_df
+
+# Count the number of nodes in each community
+community_counts <- table(community_df$Community)
+
+# Create a data frame with community information
+pie_data <- data.frame(Community = as.numeric(names(community_counts)), Count = as.vector(community_counts))
+
+# Create a pie chart of the community distribution
+ggplot(pie_data, aes(x = "", y = Count, fill = as.factor(Community))) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar("y", start = 0) +
+  labs(fill = "Community", x = NULL, y = NULL) +
+  theme_minimal() +
+  theme(legend.position = "right")
+
+
+
+
+
+
+
+```
+
