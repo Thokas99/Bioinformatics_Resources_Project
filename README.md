@@ -9,37 +9,4 @@ Thomas Sirchi
 
 ## Method
 
-The method consist in:
-
-1. **Load the RData file:**
-   - Load the RData file to initiate the analysis.
-
-2. **Extract protein-coding genes exclusively:**
-   - Isolate protein-coding genes from the dataset.
-
-3. **Conduct a differential expression analysis using the edgeR package:**
-   - Identify up-regulated genes with a p-value cutoff of 0.01, a log fold change ratio >1.5 for up-regulation, < (-1.5) for down-regulation, and a log CPM >1.
-
-4. **Perform gene set enrichment analysis using clusterProfiler:**
-   - Utilize clusterProfiler for gene set enrichment analysis.
-
-5. **Visualize an enriched pathway from the upregulated gene list using pathview:**
-   - Use pathview to visualize an enriched pathway from the list of upregulated genes.
-
-6. **Identify transcription factors (TFs) with enriched scores in the promoters of up-regulated genes:**
-   - Identify TFs with enriched scores in the promoters of up-regulated genes.
-
-7. **Select one top-enriched TF. Calculate empirical distributions of scores for all Position Weight Matrices (PWMs) found in MotifDB for the selected TF. Establish the distribution (log2) threshold cutoff at 99.75%:**
-   - Choose a top-enriched TF and calculate empirical distributions for PWMs in MotifDB. Set the distribution threshold at 99.75%.
-
-8. **Identify up-regulated genes with promoter regions having binding scores above the computed thresholds for any selected PWMs:**
-   - Identify up-regulated genes with promoter regions having binding scores above the computed thresholds for selected PWMs.
-
-9. **Discover Protein-Protein Interaction (PPI) networks among differentially expressed genes using the STRING database. Export the network in TSV format:**
-   - Use the STRING database to find PPI networks among differentially expressed genes. Export the network in TSV format.
-
-10. **Import the network using the igraph package. Identify and plot the largest connected component:**
-    - Use the igraph package to import the network. Identify and plot the largest connected component.
-
-*Adapted for a .md file for GitHub.*
-
+The analysis begins by loading the RData file, serving as the foundation for subsequent steps. Following this, protein-coding genes are meticulously isolated from the dataset, setting the stage for a comprehensive analysis. Employing the edgeR package, a differential expression analysis ensues, delineating up-regulated genes based on stringent criteria encompassing a p-value cutoff of 0.01, a log fold change ratio exceeding 1.5 for up-regulation, and below (-1.5) for down-regulation, coupled with a log CPM surpassing 1. Gene set enrichment analysis is seamlessly executed using clusterProfiler, paving the way for a nuanced exploration of biological pathways. The visualization of enriched pathways from the upregulated gene list is achieved through the application of pathview. Subsequently, transcription factors (TFs) with enriched scores in the promoters of up-regulated genes are identified, with the top-enriched TF selected for further scrutiny. Calculating empirical distributions for all Position Weight Matrices (PWMs) in MotifDB, a distribution threshold is established at 99.75%. This threshold guides the identification of up-regulated genes with promoter regions exhibiting binding scores surpassing the computed thresholds for selected PWMs. The exploration expands to encompass Protein-Protein Interaction (PPI) networks among differentially expressed genes, employing the STRING database, with the resulting network exported in TSV format. Importantly, the igraph package is then employed to import the network, subsequently unveiling and plotting the largest connected component, providing a visual representation of intricate relationships within the PPI network.
