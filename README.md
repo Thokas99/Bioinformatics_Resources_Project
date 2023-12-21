@@ -7,9 +7,9 @@ This project, undertaken as part of the Bioinformatic Resources course instructe
 **Authors:**
 Thomas Sirchi
 
-## Tasks
+## Method
 
-The tasks for this project include:
+The method consist in:
 
 1. **Load the RData file:**
    - Load the RData file to initiate the analysis.
